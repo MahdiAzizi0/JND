@@ -1,79 +1,194 @@
-🔬 Frequency Just Noticeable Difference (JND) Web Experiment
 
-This is a single-file, web-based psychoacoustic experiment designed to measure the Just Noticeable Difference (JND) for frequency, primarily aimed at $\mathbf{1000 \text{ Hz}}$.
+# JND Frequency Discrimination Threshold Experiment
 
-The application runs entirely in a modern web browser, using the Web Audio API for accurate stimulus generation and precise timing.
+This repository contains a browser-based psychoacoustic experiment designed to measure the **Just Noticeable Difference (JND)** for frequency around a 1000 Hz reference tone. The experiment uses a **2AFC adaptive staircase** to estimate frequency discrimination thresholds across **three independent blocks**.
 
-Technical Specifications
+---
 
-The experiment strictly adheres to the following adaptive staircase and stimulus parameters:
+## 1. Overview
 
-Parameter
+Participants hear **two tones** on each trial—one fixed at **1000 Hz**, the other slightly higher at **1000 Hz + Δf**.
+They must decide which tone was higher:
 
-Value
+* **Press K** → 1st tone was higher
+* **Press L** → 2nd tone was higher
 
-Description
+Δf shrinks or grows based on performance, allowing the program to converge on the perceptual threshold.
 
-Task
+The experiment runs entirely in the browser using:
 
-2I-2AFC
+* HTML + TailwindCSS
+* JavaScript
+* **Web Audio API** for tone generation
+* Built-in results export via email
 
-2-Interval, 2-Alternative Forced Choice (Higher Pitch)
+---
 
-Algorithm
+## 2. Experiment Structure
 
-Two-Down, One-Up
+### Blocks
 
-Targets the $\approx 70.7\%$ correct threshold.
+* Total blocks: **3**
+* Each block produces a separate JND estimate
+* Final threshold is the **average** of the three block JNDs
 
-Center Frequency
+### Trial Flow
 
-$1000 \text{ Hz}$
+1. 250 ms tone
+2. 500 ms silence
+3. 250 ms tone
+4. Participant response
+5. 1-second inter-trial interval
 
-The standard frequency for comparison.
+### Tone Synthesis
 
-Blocks
+* Sample rate: **44,100 Hz**
+* Duration: **250 ms**
+* Ramp in/out: **10 ms cosine-squared**
+* Amplitude normalized to avoid clipping
 
-3
+---
 
-The total number of staircase runs per participant.
+## 3. Staircase Method
 
-Tones
+### Rule
 
-$250 \text{ ms}$ duration
+**2-down / 1-up adaptive staircase**
+→ converges near **70.7% correct**, a standard psychophysical threshold.
 
-Stimulus length.
+### Parameters
 
-Ramps
+* Initial Δf = **200 Hz**
+* Primary step factor = **2.0**
+* Secondary step factor = **1.414** (after reversal switch point)
+* Reversal switch point = **4**
+* Max reversals per block = **8**
 
-$10 \text{ ms}$ onset/offset
+### Reversal Handling
 
-Cosine ramps to eliminate clicks.
+A reversal occurs when Δf changes direction (increasing → decreasing, or vice versa).
 
-ITI / ISI
+JND for each block is computed from the **geometric mean** of the final reversals.
 
-$1000 \text{ ms} / 500 \text{ ms}$
+---
 
-Inter-Trial Interval / Inter-Stimulus Interval.
+## 4. Data Recorded
 
-Starting $\Delta F$
+For each block the script stores:
 
-$200 \text{ Hz}$
+* Δf on every trial
+* All reversal values
+* Final JND for that block
 
-Initial frequency difference.
+After all blocks:
 
-Step Factor
+* The three JNDs are averaged
+* Final results are displayed visually
+* A button allows export via **mailto:** including:
 
-Variable: $2.0 \rightarrow 1.414$
+  * Block JNDs
+  * Final mean JND
+  * Full Δf histories (CSV-formatted)
 
-Coarse factor ($\times 2.0$) for first 4 reversals, then fine factor ($\times 1.414$) for final 4 reversals.
+---
 
-Stopping Rule
+## 5. How to Run the Experiment
 
-8 Reversals
+### Step 1 — Open the HTML file
 
-The staircase terminates after 8 reversals.
+Simply open **index.html** in any modern browser (Chrome recommended).
 
-Usage and Data Output
+### Step 2 — Start
 
-Participants interact via keyboard input ('K' and 'L'). Upon completion, the experiment calculates the final JND (geometric mean of the final 4 reversals) and provides a Share Results via Email button. This function packages the final JND and the complete, trial-by-trial raw $\Delta F$ history into a comma-separated format for easy analysis by the experimenter.
+Click **Start Experiment**.
+This enables the audio context (required for browser audio playback).
+
+### Step 3 — Complete the Blocks
+
+Follow on-screen instructions on the participant screen overlay.
+You will complete three blocks, each ending after 8 reversals.
+
+### Step 4 — View Results
+
+At the end you will see:
+
+* JND per block
+* Final averaged JND
+
+### Step 5 — Export Results
+
+Click **Share Results via Email** to send the raw data to the experimenter.
+
+---
+
+## 6. Technical Notes
+
+### Web Audio
+
+The script manually generates sinusoidal tones using typed buffers.
+Ramps are applied to avoid onset/offset clicking.
+
+### Dual-Screen System
+
+The UI contains two synchronized views:
+
+* **Participant Screen:** full-screen overlay (black) showing only task-essential content
+* **Experimenter Screen:** control panel + log
+
+Both remain active throughout the session.
+
+### Compatibility
+
+* Works in Chrome, Edge, and Firefox (with Web Audio enabled)
+* Not recommended on mobile devices
+* Requires user interaction before first tone (browser security)
+
+---
+
+## 7. Files
+
+```
+index.html    # full experiment (UI, audio, staircase logic)
+```
+
+The experiment is fully self-contained in this single file.
+
+---
+
+## 8. Customization
+
+You may edit:
+
+### Frequency parameters
+
+* Center frequency
+* Δf start value
+* Tone durations
+* ISI / ITI
+
+### Staircase parameters
+
+* Step factors
+* Reversal count
+* Down/up rule
+
+### UI
+
+* Instructions
+* Color scheme
+* Participant/experimenter screen text
+
+---
+
+## 9. License
+
+You are free to modify and use this experiment for research, coursework, or teaching.
+
+---
+
+If you want, I can also generate:
+
+* a **GitHub-optimized formatted README**
+* a **PDF user manual**
+* a **Methods section** suitable for publications
+* a **flowchart or diagram** of the experiment logic
