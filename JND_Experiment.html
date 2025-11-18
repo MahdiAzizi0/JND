@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JND Frequency Discrimination Threshold Test (JND)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the dual-view simulation */
+        #participant-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: black;
+            color: white;
+            display: none; /* Initially hidden, shown when the experiment starts */
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            font-family: 'Inter', sans-serif;
+            text-align: center;
+        }
+        #experimenter-log {
+            height: 400px; /* Fixed height for the log area */
+            overflow-y: scroll;
+            font-size: 0.8rem;
+        }
+        .log-line {
+            padding: 2px 0;
+            border-bottom: 1px solid #2d3748; /* dark gray */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-8 min-h-screen flex items-center justify-center">
+
+    <!-- Participant Screen (Overlay) -->
+    <div id="participant-screen" class="p-10 transition-opacity duration-300">
+        <div id="participant-content" class="text-4xl sm:text-6xl md:text-7xl font-bold">
+            Initializing...
+        </div>
+        <div id="loading-message" class="absolute bottom-10 text-xl text-gray-400">
+            Press "K" or "L" to continue.
+        </div>
+    </div>
+
+    <!-- Main Content (Experimenter View/Controls) -->
+    <div class="w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 md:p-10">
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 border-b-2 pb-2">
+            JND Frequency Discrimination Threshold Test (JND)
+        </h1>
+        <p class="text-gray-600 mb-6">
+            <span class="font-bold text-gray-800">Welcome to the Frequency Test!</span><br><br>
+            Your task is to help us find the smallest difference in pitch you can reliably hear. In each trial, you will hear <span class="font-medium">two short tones</span> separated by a brief silence. Both tones will be close to <span class="font-medium">1000 Hz</span>, but one will always be slightly higher in pitch.<br><br>
+            Your job is simple: <span class="font-medium">Identify which tone (the 1st or the 2nd) was higher in pitch</span> by pressing the corresponding key ('K' or 'L'). The difference between the tones will get smaller or larger based on your accuracy, so stay focused!<br><br>
+            This test is split into <span class="font-medium">3 blocks</span> and requires headphones for accuracy. Thanks for your participation!
+        </p>
+
+        <div id="start-area" class="text-center">
+            <button id="start-button"
+                    class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transition duration-300 focus:outline-none focus:ring-4 focus:ring-green-500 focus:ring-opacity-50">
+                Start Experiment (Click to Enable Audio)
+            </button>
+            <p class="text-sm text-gray-500 mt-3">
+                Note: This requires a quiet environment and headphones for accuracy.
+            </p>
+        </div>
+
+        <div id="results-area" class="mt-8 pt-6 border-t" style="display: none;">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Final Results</h2>
+            <div id="final-results-table" class="space-y-2">
+                <!-- Results will be displayed here -->
+            </div>
+            <button id="share-button"
+                    class="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50">
+                Share Results via Email
+            </button>
+        </div>
+
+        <div class="mt-8 pt-6 border-t">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Experimenter Log</h2>
+            <div id="experimenter-log" class="bg-gray-800 text-gray-300 p-4 rounded-lg overflow-auto">
+                <!-- Log messages will be appended here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables for audio context and staircase state
+        let audioContext;
+        let isExperimentRunning = false;
+        let currentBlock = 0;
+        let blockResults = [];
+        let keypressListener;
+        let finalJND = NaN; // To store the final average JND
+
+        // --- EXPERIMENT PARAMETERS (User-Specified) ---
+        const Fs = 44100;
+        const centerFreq = 1000;
+        const numBlocks = 3;
+
+        // --- EMAIL CONSTANT ---
+        const TARGET_EMAIL = 'mahdiazizi@stud.uni-frankfurt.de';
+
+        // Timing (in seconds)
+        const DURATION = 0.250;
+        const RAMP_DURATION = 0.010;
+        const ISI = 0.500;
+        const ITI = 1.000; // Inter-Trial Interval (after feedback)
+
+        // Staircase Rules
+        let deltaF = 200; // Delta: 200 (Initial step size)
+        const CONSECUTIVE_CORRECT_TARGET = 2; // 2-Down 1-Up
+        const REV_SWITCH_POINT = 4; // Reversals: 4 (When factor changes)
+        const MAX_REVERSALS = 8; // Sec Reversals: 8 (Stop condition)
+        const FACTOR_PRIMARY = 2.0; // Factor: 2.0 (Coarse step)
+        const FACTOR_SECONDARY = 1.414; // Sec Factor: 1.414 (Fine step)
+
+        // Staircase State Variables
+        let reversalCount = 0;
+        let consecutiveCorrect = 0;
+        let lastDirection = 0; // 0=none, 1=up (easier), -1=down (harder)
+        let reversalValues = [];
+        let deltaFHistory = [deltaF];
+
+
+        // --- UI & LOG FUNCTIONS ---
+
+        function log(message, colorClass = 'text-gray-300') {
+            const logElement = document.getElementById('experimenter-log');
+            const logLine = document.createElement('div');
+            logLine.className = `log-line ${colorClass}`;
+            logLine.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logElement.appendChild(logLine);
+            logElement.scrollTop = logElement.scrollHeight; // Auto-scroll
+        }
+
+        function updateParticipantScreen(content, color = 'white') {
+            const contentElement = document.getElementById('participant-content');
+            contentElement.innerHTML = content;
+            contentElement.style.color = color;
+        }
+
+        function showParticipantScreen(show = true) {
+            const screen = document.getElementById('participant-screen');
+            screen.style.display = show ? 'flex' : 'none';
+        }
+
+        function setupShareButton() {
+            const meanJND = finalJND; // Use the stored final JND
+
+            // Format the body content for the email
+            let emailBody = `JND Experiment Results\n\n`;
+            emailBody += `Center Frequency: ${centerFreq} Hz\n\n`;
+            blockResults.forEach((jnd, index) => {
+                emailBody += `Block ${index + 1} JND: ${jnd.toFixed(2)} Hz\n`;
+            });
+            emailBody += `\nOverall Average JND: ${meanJND.toFixed(2)} Hz`;
+
+            // URL encode the subject and body for the mailto link
+            const subject = encodeURIComponent(`JND Experiment Result: ${meanJND.toFixed(2)} Hz`);
+            const body = encodeURIComponent(emailBody);
+            
+            const mailtoLink = `mailto:${TARGET_EMAIL}?subject=${subject}&body=${body}`;
+
+            document.getElementById('share-button').onclick = () => {
+                window.location.href = mailtoLink;
+            };
+        }
+
+
+        function displayFinalResults() {
+            showParticipantScreen(false);
+            document.getElementById('start-area').style.display = 'none';
+            document.getElementById('results-area').style.display = 'block';
+
+            let tableHTML = `<p class="text-lg font-medium text-indigo-600 mb-2">Center Frequency: ${centerFreq} Hz</p>`;
+
+            blockResults.forEach((jnd, index) => {
+                tableHTML += `<p class="font-mono text-gray-700">Block ${index + 1} JND: <span class="text-xl font-bold">${jnd.toFixed(2)}</span> Hz</p>`;
+            });
+
+            const meanJND = blockResults.reduce((a, b) => a + b, 0) / blockResults.length;
+            finalJND = meanJND; // Store the final result
+            tableHTML += `<p class="mt-4 text-2xl font-extrabold text-green-700">Average JND: ${meanJND.toFixed(2)} Hz</p>`;
+
+            document.getElementById('final-results-table').innerHTML = tableHTML;
+            log(`Experiment Complete! Average JND: ${meanJND.toFixed(2)} Hz`, 'text-green-400');
+            
+            setupShareButton(); // Set up the button with the results
+        }
+
+
+        // --- WEB AUDIO API FUNCTIONS ---
+
+        /**
+         * Creates an AudioBuffer containing a sine wave with cosine ramps.
+         * @param {number} freq - The frequency of the tone (Hz).
+         * @returns {AudioBuffer}
+         */
+        function createTone(freq) {
+            const numSamples = Math.floor(DURATION * Fs);
+            const rampSamples = Math.floor(RAMP_DURATION * Fs);
+            
+            const buffer = audioContext.createBuffer(1, numSamples, Fs);
+            const data = buffer.getChannelData(0);
+
+            // 1. Generate the tone and the ramp window
+            for (let i = 0; i < numSamples; i++) {
+                // Generate sine wave sample
+                const t = i / Fs;
+                let amplitude = Math.sin(2 * Math.PI * freq * t);
+                
+                // Apply Ramps
+                if (i < rampSamples) {
+                    // Attack (Ramp Up)
+                    const ramp = (Math.cos(Math.PI + (i / rampSamples) * Math.PI) / 2) + 0.5;
+                    amplitude *= ramp;
+                } else if (i > numSamples - rampSamples) {
+                    // Decay (Ramp Down)
+                    const ramp = (Math.cos(((i - (numSamples - rampSamples)) / rampSamples) * Math.PI) / 2) + 0.5;
+                    amplitude *= ramp;
+                }
+
+                data[i] = amplitude * 0.5; // Apply a volume scale
+            }
+
+            return buffer;
+        }
+
+        /**
+         * Schedules and plays the two tones with precise timing.
+         * @param {AudioBuffer} tone1 - Buffer for the first tone.
+         * @param {AudioBuffer} tone2 - Buffer for the second tone.
+         */
+        function playStimulus(tone1, tone2) {
+            const source1 = audioContext.createBufferSource();
+            source1.buffer = tone1;
+            source1.connect(audioContext.destination);
+
+            const source2 = audioContext.createBufferSource();
+            source2.buffer = tone2;
+            source2.connect(audioContext.destination);
+
+            const startTime = audioContext.currentTime + 0.1; // 100ms buffer before starting
+
+            // Tone 1 starts now
+            source1.start(startTime);
+            
+            // Tone 2 starts after Tone 1 duration + ISI
+            const tone2StartTime = startTime + DURATION + ISI;
+            source2.start(tone2StartTime);
+        }
+
+
+        // --- STAIRCASE & TRIAL LOGIC ---
+
+        function getResponse() {
+            return new Promise((resolve) => {
+                keypressListener = (event) => {
+                    const key = event.key.toLowerCase();
+                    if (key === 'k') {
+                        document.removeEventListener('keydown', keypressListener);
+                        resolve(1); // 1st tone higher
+                    } else if (key === 'l') {
+                        document.removeEventListener('keydown', keypressListener);
+                        resolve(2); // 2nd tone higher
+                    }
+                };
+                document.addEventListener('keydown', keypressListener);
+            });
+        }
+
+        async function runTrial(trialNum) {
+            // 1. Determine current stepping factor
+            let currentFactor;
+            if (reversalCount < REV_SWITCH_POINT) {
+                currentFactor = FACTOR_PRIMARY;
+            } else {
+                currentFactor = FACTOR_SECONDARY;
+            }
+
+            // 2. Create Stimuli (Reference & Comparison)
+            const refFreq = centerFreq;
+            const compFreq = centerFreq + deltaF;
+
+            const toneRef = createTone(refFreq);
+            const toneComp = createTone(compFreq);
+
+            // 3. Randomize Order (2AFC)
+            const order = Math.random() < 0.5 ? [1, 2] : [2, 1]; // [1=Ref, 2=Comp] or [2=Comp, 1=Ref]
+
+            let tone1, tone2, correctAnswer;
+            if (order[0] === 1) {
+                // Order: Ref, Comp
+                tone1 = toneRef;
+                tone2 = toneComp;
+                correctAnswer = 2; // Comp is higher
+            } else {
+                // Order: Comp, Ref
+                tone1 = toneComp;
+                tone2 = toneRef;
+                correctAnswer = 1; // Comp is higher
+            }
+            
+            log(`Trial ${trialNum}: DeltaF = ${deltaF.toFixed(2)} Hz. Factor: ${currentFactor.toFixed(3)}.`);
+            updateParticipantScreen('+', 'white'); // Fixation
+
+            // 4. Play Stimulus
+            await new Promise(resolve => setTimeout(resolve, 500)); // Short pause before sound
+            playStimulus(tone1, tone2);
+            await new Promise(resolve => setTimeout(resolve, DURATION * 1000 * 2 + ISI * 1000 + 200)); // Wait for both tones to finish + buffer
+
+            // 5. Get User Response
+            updateParticipantScreen(`Which was higher?<br><br>1st (K) &nbsp; &nbsp; 2nd (L)`);
+            const response = await getResponse();
+            const isCorrect = (response === correctAnswer);
+
+            // 6. Update Staircase & Provide Feedback
+            if (isCorrect) {
+                consecutiveCorrect++;
+                updateParticipantScreen('CORRECT', 'lime');
+                log(`Trial ${trialNum}: CORRECT. Consecutive: ${consecutiveCorrect}/${CONSECUTIVE_CORRECT_TARGET}`, 'text-green-500');
+
+                // 2-Down Logic
+                if (consecutiveCorrect === CONSECUTIVE_CORRECT_TARGET) {
+                    deltaF /= currentFactor; // Decrease difficulty (decrease DeltaF)
+                    consecutiveCorrect = 0;
+
+                    // Check for Reversal (Direction switch: Up -> Down)
+                    if (lastDirection === 1) {
+                        reversalCount++;
+                        reversalValues.push(deltaFHistory[deltaFHistory.length - 1]);
+                        log(`REVERSAL ${reversalCount}/${MAX_REVERSALS} (Down). Value: ${reversalValues[reversalValues.length-1].toFixed(2)} Hz`, 'text-yellow-400');
+                    }
+                    lastDirection = -1; // New direction is Down
+                }
+            } else {
+                consecutiveCorrect = 0;
+                deltaF *= currentFactor; // Increase difficulty (increase DeltaF)
+                updateParticipantScreen('INCORRECT', 'red');
+                log(`Trial ${trialNum}: INCORRECT.`, 'text-red-500');
+                
+                // Check for Reversal (Direction switch: Down -> Up)
+                if (lastDirection === -1) {
+                    reversalCount++;
+                    reversalValues.push(deltaFHistory[deltaFHistory.length - 1]);
+                    log(`REVERSAL ${reversalCount}/${MAX_REVERSALS} (Up). Value: ${reversalValues[reversalValues.length-1].toFixed(2)} Hz`, 'text-yellow-400');
+                }
+                lastDirection = 1; // New direction is Up
+            }
+            
+            // Store history and enforce minimum step size
+            deltaF = Math.max(deltaF, 0.1); // Keep deltaF positive and non-zero
+            deltaFHistory.push(deltaF);
+
+            // 7. ITI (Inter-Trial Interval)
+            await new Promise(resolve => setTimeout(resolve, ITI * 1000));
+        }
+
+        function calculateJND() {
+            // JND is calculated as the Geometric Mean of the last 'MAX_REVERSALS - REV_SWITCH_POINT' reversals.
+            const reversalsToAvg = MAX_REVERSALS - REV_SWITCH_POINT;
+            if (reversalValues.length >= reversalsToAvg) {
+                const finalValues = reversalValues.slice(-reversalsToAvg);
+                const logMean = finalValues.reduce((sum, val) => sum + Math.log(val), 0) / finalValues.length;
+                return Math.exp(logMean); // Geometric Mean
+            } else if (reversalValues.length > 0) {
+                log(`Warning: Only ${reversalValues.length} reversals available for averaging.`, 'text-red-500');
+                return reversalValues.reduce((sum, val) => sum + val, 0) / reversalValues.length; // Arithmetic Mean Fallback
+            } else {
+                return NaN;
+            }
+        }
+
+        async function runBlock() {
+            // Reset staircase for the block
+            deltaF = 200;
+            reversalCount = 0;
+            consecutiveCorrect = 0;
+            lastDirection = 0;
+            reversalValues = [];
+            deltaFHistory = [deltaF];
+            let trialCounter = 1;
+
+            log(`--- Starting Block ${currentBlock} / ${numBlocks} (Center Freq: ${centerFreq} Hz) ---`, 'text-white bg-blue-600 p-1');
+            
+            updateParticipantScreen(`Starting Block ${currentBlock}...<br>Listen for the tones.`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            while (reversalCount < MAX_REVERSALS) {
+                await runTrial(trialCounter++);
+            }
+
+            const jnd = calculateJND();
+            blockResults.push(jnd);
+            
+            log(`Block ${currentBlock} Complete. JND: ${jnd.toFixed(2)} Hz.`, 'text-yellow-300');
+            
+            if (currentBlock < numBlocks) {
+                updateParticipantScreen(`Block ${currentBlock} Complete.<br><br>JND: ${jnd.toFixed(2)} Hz<br><br>Press "K" or "L" to start Block ${currentBlock + 1}.`, 'yellow');
+                await getResponse();
+            }
+        }
+
+        async function startExperiment() {
+            if (isExperimentRunning) return;
+            isExperimentRunning = true;
+            
+            // Initialize Audio Context on user interaction
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: Fs });
+            log("Audio Context initialized.", 'text-green-500');
+
+            document.getElementById('start-area').style.display = 'none';
+            showParticipantScreen(true);
+            
+            // Initial instructions
+            let instructionText = `FREQUENCY DISCRIMINATION TASK<br><br>You will hear two tones.<br>Select the HIGHER pitch tone.<br><br>Press "K" if the 1st was higher.<br>Press "L" if the 2nd was higher.<br><br>Press "K" or "L" to start Block 1.`;
+            updateParticipantScreen(instructionText, 'white');
+            await getResponse();
+            
+            // Run all blocks
+            for (let i = 1; i <= numBlocks; i++) {
+                currentBlock = i;
+                await runBlock();
+            }
+
+            // End of experiment
+            isExperimentRunning = false;
+            displayFinalResults();
+            updateParticipantScreen(`EXPERIMENT COMPLETE<br><br>Thank you!<br><br>Results are in the log below. Click 'Share Results' to send them.`, 'lime');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            showParticipantScreen(false);
+        }
+
+        // Attach event listener to the start button
+        document.getElementById('start-button').addEventListener('click', startExperiment);
+        log('Application loaded. Click "Start Experiment" to begin.', 'text-white');
+    </script>
+</body>
+</html>
