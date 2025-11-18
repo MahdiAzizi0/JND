@@ -1,3 +1,7 @@
+# 🚀 Launch the Experiment
+👉 **[▶️ Click here to start the Frequency JND Test](https://mahdiazizi0.github.io/JND/index.html)**
+
+
 # JND Frequency Discrimination Experiment
 
 This is an interactive, browser-based test that measures how small a pitch difference you can reliably hear around **1000 Hz**. You’ll listen to pairs of tones, decide which one was higher, and the program will automatically adjust difficulty to find your **Just Noticeable Difference (JND)**.
